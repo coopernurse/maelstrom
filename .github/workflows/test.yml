@@ -14,6 +14,12 @@ jobs:
       run: |
         export DIND_HOST=docker
         export DOCKER_DRIVER=overlay2
+        export CI_CACHEDIR=`pwd`/.cache
+        export GOPATH="$CI_CACHEDIR"
+        export PATH="$PATH:$CI_CACHEDIR/bin"
+        export PYTHONPATH="$CI_CACHEDIR/lib/python2.7/site-packages"
+        mkdir -p "$CI_CACHEDIR"
+        pip install wheel
         ./scripts/install_deps.sh
         make idl
         make test
