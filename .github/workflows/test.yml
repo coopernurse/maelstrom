@@ -17,7 +17,7 @@ jobs:
         export DOCKER_DRIVER=overlay2
         export CI_CACHEDIR=`pwd`/.cache
         export GOPATH="$CI_CACHEDIR"
-        export PATH="$PATH:$CI_CACHEDIR/bin"
+        export PATH="$PATH:$CI_CACHEDIR/bin:$HOME/.local/bin"
         export PYTHONPATH="$CI_CACHEDIR/lib/python2.7/site-packages"
         mkdir -p "$CI_CACHEDIR"
         pip install --user wheel
