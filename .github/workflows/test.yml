@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    #- uses: docker://coopernurse/maelstrom-build:latest
+    - uses: actions/checkout@v1
     - name: Run tests
       shell: bash
       run: |
