@@ -19,7 +19,7 @@ jobs:
         export PATH="$PATH:$CI_CACHEDIR/bin"
         export PYTHONPATH="$CI_CACHEDIR/lib/python2.7/site-packages"
         mkdir -p "$CI_CACHEDIR"
-        pip install wheel
+        pip install --user wheel
         ./scripts/install_deps.sh
         make idl
         make test
