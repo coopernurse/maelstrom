@@ -12,6 +12,7 @@ jobs:
     - name: Run tests
       shell: bash
       run: |
+        set -x
         export DIND_HOST=docker
         export DOCKER_DRIVER=overlay2
         export CI_CACHEDIR=`pwd`/.cache
