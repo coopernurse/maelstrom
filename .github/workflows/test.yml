@@ -8,8 +8,9 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - uses: docker://coopernurse/maelstrom-build:latest
+    #- uses: docker://coopernurse/maelstrom-build:latest
     - name: Run tests
+      shell: bash
       run: |
         export DIND_HOST=docker
         export DOCKER_DRIVER=overlay2

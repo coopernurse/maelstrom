@@ -1,6 +1,6 @@
 # Maelstrom
 
-[![Build status](https://gitlab.com/coopernurse/maelstrom/badges/master/build.svg)](https://gitlab.com/coopernurse/maelstrom/-/jobs)
+[![Build status](https://github.com/coopernurse/maelstrom/workflows/<test>/badge.svg)](https://github.com/coopernurse/maelstrom/actions/)
 
 ## Build and Test
 
