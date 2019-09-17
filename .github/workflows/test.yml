@@ -21,9 +21,10 @@ jobs:
         export PATH="$PATH:$CI_CACHEDIR/bin:$HOME/.local/bin"
         export PYTHONPATH="$CI_CACHEDIR/lib/python2.7/site-packages"
         mkdir -p "$CI_CACHEDIR"
-        pip install --user wheel
-        ./scripts/install_deps.sh
-        make idl
-        make test
-        make maelctl
-        make maelstromd
+        docker images
+        #pip install --user wheel
+        #./scripts/install_deps.sh
+        #make idl
+        #make test
+        #make maelctl
+        #make maelstromd
