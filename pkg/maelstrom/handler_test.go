@@ -12,22 +12,22 @@ func TestHandlerStartsContainerOnFirstRequest(t *testing.T) {
 	})
 }
 
-//func TestHandlerUsesExistingContainerIfAlreadyStarted(t *testing.T) {
-//	wrapTest(t, func() {
-//		GivenExistingContainer(t).
-//			WhenHTTPRequestReceived().
-//			ThenNoNewContainerStarted()
-//	})
-//}
-//
-//func TestHealthCheckStopsContainerOnFailure(t *testing.T) {
-//	wrapTest(t, func() {
-//		GivenExistingContainerWithBadHealthCheckPath(t).
-//			WhenHealthCheckTimeoutElapses().
-//			ThenContainerIsStopped()
-//	})
-//}
-//
+func TestHandlerUsesExistingContainerIfAlreadyStarted(t *testing.T) {
+	wrapTest(t, func() {
+		GivenExistingContainer(t).
+			WhenHTTPRequestReceived().
+			ThenNoNewContainerStarted()
+	})
+}
+
+func TestHealthCheckStopsContainerOnFailure(t *testing.T) {
+	wrapTest(t, func() {
+		GivenExistingContainerWithBadHealthCheckPath(t).
+			WhenHealthCheckTimeoutElapses().
+			ThenContainerIsStopped()
+	})
+}
+
 //func TestHealthCheckKeepsContainerOnSuccess(t *testing.T) {
 //	wrapTest(t, func() {
 //		GivenExistingContainer(t).
