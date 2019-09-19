@@ -17,10 +17,7 @@ jobs:
         export GOPATH="$CI_CACHEDIR"
         export PATH="$PATH:$CI_CACHEDIR/bin:$HOME/.local/bin"
         export PYTHONPATH="$CI_CACHEDIR/lib/python2.7/site-packages"
-        export LOGXI=*=DBG
         mkdir -p "$CI_CACHEDIR"
-        docker images
-        env
         pip install --user wheel
         ./scripts/install_deps.sh
         sudo apt-get install -y libsqlite3-dev
