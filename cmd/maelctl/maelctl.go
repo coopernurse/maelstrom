@@ -250,7 +250,7 @@ func projectPut(args docopt.Opts, svc v1.MaelstromService) {
 	if fname == "" {
 		fname = "maelstrom.yml"
 	}
-	proj, err := maelstrom.ParseYamlFileAndInterpolateEnv(fname)
+	proj, err := maelstrom.ParseYamlFileAndInterpolateEnv(fname, true)
 	checkErr(err, "Unable to load project YAML file")
 	out, err := svc.PutProject(v1.PutProjectInput{Project: proj})
 	checkErr(err, "PutProject failed")
