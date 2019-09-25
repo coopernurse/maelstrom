@@ -240,6 +240,12 @@ func componentRm(args docopt.Opts, svc v1.MaelstromService) {
 }
 
 func projectPut(args docopt.Opts, svc v1.MaelstromService) {
+	envfile := argStr(args, "--env")
+	if envfile != "" {
+		err := config.FileToEnv(envfile)
+		checkErr(err, "Unable to load env file: "+envfile)
+	}
+
 	fname := argStr(args, "--file")
 	if fname == "" {
 		fname = "maelstrom.yml"
@@ -491,7 +497,7 @@ Usage:
   maelctl es ls [--prefix=<prefix>] [--component=<component>] [--type=<type>]
   maelctl logs [--components=<components>] [--since=<since>]
   maelctl project ls [--prefix=<prefix>]
-  maelctl project put [--file=<file>]
+  maelctl project put [--file=<file>] [--env=<envfile>]
   maelctl project rm <name>
 `
 	args, err := docopt.ParseDoc(usage)
