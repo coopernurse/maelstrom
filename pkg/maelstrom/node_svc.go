@@ -2,15 +2,23 @@ package maelstrom
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/autoscaling"
+	"github.com/aws/aws-sdk-go/service/sqs"
 	linuxproc "github.com/c9s/goprocinfo/linux"
 	"github.com/coopernurse/barrister-go"
 	"github.com/coopernurse/maelstrom/pkg/common"
 	"github.com/coopernurse/maelstrom/pkg/v1"
 	docker "github.com/docker/docker/client"
 	log "github.com/mgutz/logxi/v1"
+	"github.com/pkg/errors"
 	"math/rand"
+	"os/exec"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,25 +26,33 @@ import (
 const rolePlacement = "placement"
 const roleCron = "cron"
 
+type ShutdownFunc func()
+
 type placeComponentResult struct {
 	output *v1.PlaceComponentOutput
 	err    error
 }
 
 func NewNodeServiceImpl(handlerFactory *DockerHandlerFactory, db Db, dockerClient *docker.Client, nodeId string,
-	peerUrl string, startTime time.Time, numCPUs int64, totalMemAllowed int64) (*NodeServiceImpl, error) {
+	peerUrl string, startTime time.Time, numCPUs int64, totalMemAllowed int64,
+	instanceId string, shutdownCh chan ShutdownFunc, awsSession *session.Session,
+	terminateCommand string) (*NodeServiceImpl, error) {
 	nodeSvc := &NodeServiceImpl{
 		handlerFactory:   handlerFactory,
 		db:               db,
 		dockerClient:     dockerClient,
 		nodeId:           nodeId,
 		peerUrl:          peerUrl,
+		instanceId:       instanceId,
 		totalMemAllowed:  totalMemAllowed,
 		startTimeMillis:  common.TimeToMillis(startTime),
 		numCPUs:          numCPUs,
 		loadStatusLock:   &sync.Mutex{},
 		placeCompLock:    &sync.Mutex{},
 		placeCompWaiters: make(map[string][]chan placeComponentResult),
+		shutdownCh:       shutdownCh,
+		awsSession:       awsSession,
+		terminateCommand: terminateCommand,
 	}
 
 	cluster := NewCluster(nodeId, nodeSvc)
@@ -49,7 +65,8 @@ func NewNodeServiceImpl(handlerFactory *DockerHandlerFactory, db Db, dockerClien
 }
 
 func NewNodeServiceImplFromDocker(handlerFactory *DockerHandlerFactory, db Db, dockerClient *docker.Client,
-	peerUrl string, totalMemAllowed int64) (*NodeServiceImpl, error) {
+	peerUrl string, totalMemAllowed int64, instanceId string, shutdownCh chan ShutdownFunc,
+	awsSession *session.Session, terminateCommand string) (*NodeServiceImpl, error) {
 
 	info, err := dockerClient.Info(context.Background())
 	if err != nil {
@@ -57,15 +74,20 @@ func NewNodeServiceImplFromDocker(handlerFactory *DockerHandlerFactory, db Db, d
 	}
 
 	return NewNodeServiceImpl(handlerFactory, db, dockerClient, info.ID, peerUrl, time.Now(), int64(info.NCPU),
-		totalMemAllowed)
+		totalMemAllowed, instanceId, shutdownCh, awsSession, terminateCommand)
 }
 
 type NodeServiceImpl struct {
-	handlerFactory   *DockerHandlerFactory
-	dockerClient     *docker.Client
-	db               Db
-	cluster          *Cluster
-	nodeId           string
+	handlerFactory *DockerHandlerFactory
+	dockerClient   *docker.Client
+	db             Db
+	cluster        *Cluster
+	// nodeId is the maelstrom node id used to uniquely identify this node in the cluster
+	// it is currently the docker node id and is derived from the docker daemon at startup
+	nodeId string
+	// instanceId is an optional string used to identify the host machine
+	// this is typically an identifier set by the cloud provider (e.g. AWS EC2 Instance ID)
+	instanceId       string
 	peerUrl          string
 	totalMemAllowed  int64
 	startTimeMillis  int64
@@ -73,6 +95,9 @@ type NodeServiceImpl struct {
 	loadStatusLock   *sync.Mutex
 	placeCompLock    *sync.Mutex
 	placeCompWaiters map[string][]chan placeComponentResult
+	shutdownCh       chan ShutdownFunc
+	awsSession       *session.Session
+	terminateCommand string
 }
 
 func (n *NodeServiceImpl) NodeId() string {
@@ -532,6 +557,145 @@ func (n *NodeServiceImpl) StartStopComponents(input v1.StartStopComponentsInput)
 		Stopped:               stopped,
 		Errors:                errors,
 	}, nil
+}
+
+func (n NodeServiceImpl) TerminateNode(input v1.TerminateNodeInput) (v1.TerminateNodeOutput, error) {
+	out := v1.TerminateNodeOutput{
+		AcceptedMessage: false,
+		NodeId:          n.nodeId,
+		InstanceId:      n.instanceId,
+	}
+	if input.AwsLifecycleHook != nil && input.AwsLifecycleHook.InstanceId == n.instanceId {
+		n.terminateSelfViaAwsHook(*input.AwsLifecycleHook)
+	}
+	return out, nil
+}
+
+func (n NodeServiceImpl) terminateSelfViaAwsHook(hook v1.AwsLifecycleHook) {
+	log.Info("nodesvc: TerminateNode received - shutting down", "instanceId", n.instanceId, "nodeId", n.nodeId)
+
+	sqsSvc := sqs.New(n.awsSession)
+	_, err := sqsSvc.DeleteMessage(&sqs.DeleteMessageInput{
+		QueueUrl:      aws.String(hook.QueueUrl),
+		ReceiptHandle: aws.String(hook.MessageReceiptHandle),
+	})
+	if err != nil {
+		log.Error("nodesvc: TerminateNode sqs delete message error", "err", err)
+	}
+
+	n.shutdownCh <- func() {
+		autoscaleSvc := autoscaling.New(n.awsSession)
+		_, err := autoscaleSvc.CompleteLifecycleAction(&autoscaling.CompleteLifecycleActionInput{
+			AutoScalingGroupName:  aws.String(hook.AutoScalingGroupName),
+			InstanceId:            aws.String(hook.InstanceId),
+			LifecycleActionToken:  aws.String(hook.LifecycleActionToken),
+			LifecycleHookName:     aws.String(hook.LifecycleHookName),
+			LifecycleActionResult: aws.String("CONTINUE"),
+		})
+		if err == nil {
+			if n.terminateCommand != "" {
+				parts := strings.Split(n.terminateCommand, " ")
+				cmd := exec.Command(parts[0], parts[1:]...)
+				log.Info("nodesvc: running post-terminate command", "command", n.terminateCommand)
+				err = cmd.Run()
+			}
+		}
+		if err != nil {
+			log.Error("nodesvc: CompleteAutoscalingLifecycleAction error", "err", err)
+		}
+	}
+}
+
+func (n *NodeServiceImpl) RunAwsTerminatePollerLoop(queueUrl string, maxAgeSeconds int,
+	ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+	ticker := time.Tick(30 * time.Second)
+	roleId := "aws-terminate-poller"
+	maxAgeDur := time.Second * time.Duration(maxAgeSeconds)
+	for {
+		select {
+		case <-ticker:
+			var hookMsgs []*AwsLifecycleHookMessage
+			acquired, _, err := n.db.AcquireOrRenewRole(roleId, n.nodeId, 95*time.Second)
+			if err == nil {
+				if acquired {
+					for {
+						hookMsgs, err = n.pollAwsTerminateQueue(queueUrl, maxAgeDur)
+						if err == nil {
+							err = n.sendAwsTerminateMessages(hookMsgs)
+						}
+						if len(hookMsgs) == 0 {
+							break
+						}
+					}
+				}
+			}
+			if err != nil {
+				log.Error("nodesvc: aws terminate poller failed", "err", err, "nodeId", n.nodeId, "queueUrl",
+					queueUrl)
+			}
+		case <-ctx.Done():
+			log.Info("nodesvc: aws terminate poller loop shutdown gracefully")
+			return
+		}
+	}
+}
+
+func (n *NodeServiceImpl) sendAwsTerminateMessages(hookMsgs []*AwsLifecycleHookMessage) error {
+	for _, msg := range hookMsgs {
+		input := v1.TerminateNodeInput{AwsLifecycleHook: msg.ToAwsLifecycleHook()}
+		out, err := n.TerminateNode(input)
+		localAccepted := false
+		if err == nil {
+			localAccepted = out.AcceptedMessage
+		} else {
+			return errors.Wrap(err, "local TerminateNode failed")
+		}
+		if !localAccepted {
+			n.cluster.BroadcastTerminationEvent(input)
+		}
+	}
+	return nil
+}
+
+func (n *NodeServiceImpl) pollAwsTerminateQueue(queueUrl string,
+	maxAge time.Duration) ([]*AwsLifecycleHookMessage, error) {
+	sqsSvc := sqs.New(n.awsSession)
+	out, err := sqsSvc.ReceiveMessage(&sqs.ReceiveMessageInput{
+		QueueUrl:            aws.String(queueUrl),
+		MaxNumberOfMessages: aws.Int64(10),
+		VisibilityTimeout:   aws.Int64(60),
+		WaitTimeSeconds:     aws.Int64(2),
+	})
+	if err == nil {
+		hookMsgs := []*AwsLifecycleHookMessage{}
+		for _, msg := range out.Messages {
+			var hook AwsLifecycleHookMessage
+			err = json.Unmarshal([]byte(*msg.Body), &hook)
+			if err != nil {
+				return nil, errors.Wrap(err, "json.Unmarshal failed for AwsLifecycleHookMessage")
+			}
+			msgAge := hook.TryParseAge()
+			if msgAge == nil || *msgAge > maxAge {
+				log.Info("nodesvc: deleting stale lifecycle hook message", "time", hook.Time,
+					"instance", hook.EC2InstanceId)
+				_, err = sqsSvc.DeleteMessage(&sqs.DeleteMessageInput{
+					QueueUrl:      aws.String(queueUrl),
+					ReceiptHandle: msg.ReceiptHandle,
+				})
+				if err != nil {
+					log.Error("nodesvc: error deleting stale lifecycle hook message", "err", err)
+				}
+			} else if hook.EC2InstanceId != "" {
+				hook.QueueUrl = queueUrl
+				hook.MessageReceiptHandle = *msg.ReceiptHandle
+				hookMsgs = append(hookMsgs, &hook)
+			}
+		}
+		return hookMsgs, nil
+	} else {
+		return nil, errors.Wrap(err, "aws terminate sqs ReceiveMessage failed")
+	}
 }
 
 func (n *NodeServiceImpl) RunAutoscaleLoop(interval time.Duration, ctx context.Context, wg *sync.WaitGroup) {
