@@ -249,7 +249,7 @@ func main() {
 	go evPoller.Run(daemonWG)
 
 	daemonWG.Add(1)
-	go HandleShutdownSignal(servers, conf.ShutdownPauseSeconds, cancelFx, shutdownCh, daemonWG)
+	go HandleShutdownSignal(servers, handlerFactory, conf.ShutdownPauseSeconds, cancelFx, shutdownCh, daemonWG)
 
 	daemonWG.Wait()
 	err = db.ReleaseAllRoles(nodeSvcImpl.NodeId())
@@ -259,8 +259,8 @@ func main() {
 	log.Info("maelstromd: exiting")
 }
 
-func HandleShutdownSignal(svrs []*http.Server, pauseSeconds int, cancelFx context.CancelFunc,
-	shutdownCh chan maelstrom.ShutdownFunc, wg *sync.WaitGroup) {
+func HandleShutdownSignal(svrs []*http.Server, handlerFactory *maelstrom.DockerHandlerFactory, pauseSeconds int,
+	cancelFx context.CancelFunc, shutdownCh chan maelstrom.ShutdownFunc, wg *sync.WaitGroup) {
 	defer wg.Done()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -276,6 +276,15 @@ func HandleShutdownSignal(svrs []*http.Server, pauseSeconds int, cancelFx contex
 	log.Info("maelstromd: received shutdown signal, stopping background goroutines")
 
 	cancelFx()
+
+	if pauseSeconds > 0 {
+		log.Info("maelstromd: pausing before stopping containers", "seconds", pauseSeconds)
+		time.Sleep(time.Second * time.Duration(pauseSeconds))
+	}
+
+	log.Info("maelstromd: stopping all containers")
+	handlerFactory.Shutdown()
+
 	if pauseSeconds > 0 {
 		log.Info("maelstromd: pausing before stopping HTTP servers", "seconds", pauseSeconds)
 		time.Sleep(time.Second * time.Duration(pauseSeconds))

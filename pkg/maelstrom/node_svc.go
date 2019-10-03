@@ -24,6 +24,7 @@ import (
 )
 
 const rolePlacement = "placement"
+const roleAutoScale = "autoscale"
 const roleCron = "cron"
 
 type ShutdownFunc func()
@@ -203,28 +204,42 @@ func (n *NodeServiceImpl) StatusChanged(input v1.StatusChangedInput) (v1.StatusC
 
 func (n *NodeServiceImpl) PlaceComponent(input v1.PlaceComponentInput) (v1.PlaceComponentOutput, error) {
 	// determine if we're the placement node
-	roleOk, roleNode, err := n.db.AcquireOrRenewRole(rolePlacement, n.nodeId, time.Minute)
-	if err != nil {
-		msg := "nodesvc: db.AcquireOrRenewRole error"
-		log.Error(msg, "component", input.ComponentName, "role", rolePlacement, "err", err)
-		return v1.PlaceComponentOutput{}, &barrister.JsonRpcError{Code: int(DbError), Message: msg}
-	}
-	if !roleOk {
-		if roleNode == n.nodeId {
-			msg := "nodesvc: db.AcquireOrRenewRole returned false, but also returned our nodeId"
-			log.Error(msg, "component", input.ComponentName, "role", rolePlacement, "node", n.nodeId)
-			return v1.PlaceComponentOutput{}, &barrister.JsonRpcError{Code: int(MiscError), Message: msg}
+	acquired := false
+	deadline := time.Now().Add(70 * time.Second)
+	for !acquired && time.Now().Before(deadline) {
+		roleOk, roleNode, err := n.db.AcquireOrRenewRole(rolePlacement, n.nodeId, time.Minute)
+		if err != nil {
+			log.Warn("nodesvc: db.AcquireOrRenewRole error", "component", input.ComponentName, "role", rolePlacement,
+				"err", err)
 		} else {
-			peerSvc := n.cluster.GetNodeServiceById(roleNode)
-			if peerSvc == nil {
-				msg := "nodesvc: PlaceComponent can't find peer node"
-				log.Error(msg, "component", input.ComponentName, "peerNode", roleNode)
-				return v1.PlaceComponentOutput{}, &barrister.JsonRpcError{Code: int(MiscError), Message: msg}
-			} else {
-				return peerSvc.PlaceComponent(input)
+			acquired = roleOk
+			if !roleOk {
+				if roleNode == n.nodeId {
+					log.Warn("nodesvc: db.AcquireOrRenewRole returned false, but also returned our nodeId - will retry",
+						"component", input.ComponentName, "role", rolePlacement, "node", n.nodeId)
+				} else {
+					peerSvc := n.cluster.GetNodeServiceById(roleNode)
+					if peerSvc == nil {
+						log.Warn("nodesvc: PlaceComponent can't find peer node - will retry",
+							"component", input.ComponentName, "peerNode", roleNode)
+					} else {
+						// delegate request to peer
+						return peerSvc.PlaceComponent(input)
+					}
+				}
 			}
 		}
+		if !acquired {
+			time.Sleep(time.Duration(rand.Intn(3000)+2000) * time.Millisecond)
+		}
 	}
+
+	if !acquired {
+		msg := "nodesvc: timeout trying to acquire or delegate placement"
+		log.Error(msg, "component", input.ComponentName, "role", rolePlacement)
+		return v1.PlaceComponentOutput{}, &barrister.JsonRpcError{Code: int(DbError), Message: msg}
+	}
+	defer logErr(n.db.ReleaseRole(rolePlacement, n.nodeId), "release "+rolePlacement+" for nodeId: "+n.nodeId)
 
 	var waitCh chan placeComponentResult
 
@@ -412,9 +427,9 @@ func (n *NodeServiceImpl) placeComponentTryOnce(componentName string, requiredRA
 }
 
 func (n *NodeServiceImpl) autoscale() {
-	roleOk, _, err := n.db.AcquireOrRenewRole(rolePlacement, n.nodeId, time.Minute)
+	roleOk, _, err := n.db.AcquireOrRenewRole(roleAutoScale, n.nodeId, time.Minute)
 	if err != nil {
-		log.Error("nodesvc: autoscale AcquireOrRenewRole error", "role", rolePlacement, "err", err)
+		log.Error("nodesvc: autoscale AcquireOrRenewRole error", "role", roleAutoScale, "err", err)
 		return
 	}
 	if !roleOk {
@@ -574,6 +589,7 @@ func (n NodeServiceImpl) TerminateNode(input v1.TerminateNodeInput) (v1.Terminat
 func (n NodeServiceImpl) terminateSelfViaAwsHook(hook v1.AwsLifecycleHook) {
 	log.Info("nodesvc: TerminateNode received - shutting down", "instanceId", n.instanceId, "nodeId", n.nodeId)
 
+	// Delete the hook message from SQS
 	sqsSvc := sqs.New(n.awsSession)
 	_, err := sqsSvc.DeleteMessage(&sqs.DeleteMessageInput{
 		QueueUrl:      aws.String(hook.QueueUrl),
@@ -583,6 +599,7 @@ func (n NodeServiceImpl) terminateSelfViaAwsHook(hook v1.AwsLifecycleHook) {
 		log.Error("nodesvc: TerminateNode sqs delete message error", "err", err)
 	}
 
+	// Trigger a shutdown, passing in a callback that marks the autoscale hook complete
 	n.shutdownCh <- func() {
 		autoscaleSvc := autoscaling.New(n.awsSession)
 		_, err := autoscaleSvc.CompleteLifecycleAction(&autoscaling.CompleteLifecycleActionInput{
@@ -593,6 +610,8 @@ func (n NodeServiceImpl) terminateSelfViaAwsHook(hook v1.AwsLifecycleHook) {
 			LifecycleActionResult: aws.String("CONTINUE"),
 		})
 		if err == nil {
+			// Run post-terminate command (typically "systemctl disable maelstromd")
+			// This is useful to prevent systemd from re-spawning maelstrom after we exit
 			if n.terminateCommand != "" {
 				parts := strings.Split(n.terminateCommand, " ")
 				cmd := exec.Command(parts[0], parts[1:]...)
@@ -706,6 +725,9 @@ func (n *NodeServiceImpl) RunAutoscaleLoop(interval time.Duration, ctx context.C
 		case <-ticker:
 			n.autoscale()
 		case <-ctx.Done():
+			// release role (will no-op if we don't hold the role lock)
+			logErr(n.db.ReleaseRole(roleAutoScale, n.nodeId), "release "+roleAutoScale+" for nodeId: "+n.nodeId)
+
 			log.Info("nodesvc: autoscale loop shutdown gracefully")
 			return
 		}
