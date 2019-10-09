@@ -2,6 +2,7 @@ package maelstrom
 
 import (
 	"github.com/coopernurse/barrister-go"
+	"github.com/coopernurse/maelstrom/pkg/common"
 	v1 "github.com/coopernurse/maelstrom/pkg/v1"
 	log "github.com/mgutz/logxi/v1"
 	"net/http"
@@ -52,12 +53,13 @@ func (c *Cluster) SetNode(node v1.NodeStatus) bool {
 	}
 	c.lock.Unlock()
 	if !ok {
-		log.Info("cluster: added node", "nodeId", c.myNodeId, "remoteNode", node.NodeId)
+		log.Info("cluster: added node", "nodeId", common.TruncNodeId(c.myNodeId),
+			"remoteNode", common.TruncNodeId(node.NodeId))
 	}
 	if modified {
 		if log.IsDebug() {
-			log.Debug("cluster: SetNode modified", "myNode", c.myNodeId, "peerNode", node.NodeId,
-				"version", node.Version)
+			log.Debug("cluster: SetNode modified", "myNode", common.TruncNodeId(c.myNodeId),
+				"peerNode", common.TruncNodeId(node.NodeId), "version", node.Version)
 		}
 		c.notifyAll()
 	}
@@ -115,7 +117,8 @@ func (c *Cluster) RemoveNode(nodeId string) bool {
 	}
 	c.lock.Unlock()
 	if found {
-		log.Info("cluster: removed node", "nodeId", c.myNodeId, "remoteNode", nodeId, "peerUrl", oldNode.PeerUrl)
+		log.Info("cluster: removed node", "nodeId", common.TruncNodeId(c.myNodeId),
+			"remoteNode", common.TruncNodeId(nodeId), "peerUrl", oldNode.PeerUrl)
 		c.notifyAll()
 	}
 	return found
@@ -228,7 +231,7 @@ func (c *Cluster) BroadcastTerminationEvent(input v1.TerminateNodeInput) {
 				log.Warn("cluster: error broadcasting termination event", "err", err.Error())
 			} else if out.AcceptedMessage {
 				log.Info("cluster: node accepted termination event", "instanceId", out.InstanceId,
-					"peerNodeId", out.NodeId)
+					"peerNodeId", common.TruncNodeId(out.NodeId))
 			}
 		}(svc)
 	}
