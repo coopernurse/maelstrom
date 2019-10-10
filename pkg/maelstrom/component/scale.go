@@ -27,7 +27,7 @@ type scaleInputInternal struct {
 }
 
 type scaleComponentInput struct {
-	delta int64
+	targetCount int
 }
 
 type ScaleOutput struct {

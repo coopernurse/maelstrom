@@ -63,6 +63,7 @@ func NewDispatcher(nodeSvc v1.NodeService, dockerClient *docker.Client, maelstro
 		maelstromUrl:            maelstromUrl,
 		myNodeId:                myNodeId,
 		maelComponentIdCounter:  maelComponentId(0),
+		targetCountByComponent:  make(map[string]int),
 		remoteCountsByComponent: make(map[string]remoteNodeCounts),
 	}
 
@@ -90,6 +91,7 @@ type Dispatcher struct {
 	maelstromUrl            string
 	myNodeId                string
 	maelComponentIdCounter  maelComponentId
+	targetCountByComponent  map[string]int
 	remoteCountsByComponent map[string]remoteNodeCounts
 }
 
@@ -240,7 +242,7 @@ func (d *Dispatcher) startComponent(dbComp *v1.Component) *Component {
 	dbComp.Docker.Image = common.NormalizeImageName(dbComp.Docker.Image)
 	d.maelComponentIdCounter++
 	c := NewComponent(d.maelComponentIdCounter, d, d.nodeSvc, d.dockerClient, dbComp, d.maelstromUrl, d.myNodeId,
-		d.remoteCountsByComponent[dbComp.Name])
+		d.targetCountByComponent[dbComp.Name], d.remoteCountsByComponent[dbComp.Name])
 	d.componentsByName[dbComp.Name] = c
 	return c
 }
@@ -260,7 +262,13 @@ func (d *Dispatcher) scale(req *scaleInputInternal) {
 		d.version++
 		for _, target := range req.TargetCounts {
 			comp := d.component(target.Component)
-			go comp.Scale(&scaleComponentInput{delta: target.Delta})
+			oldTarget := d.targetCountByComponent[target.Component.Name]
+			newTarget := oldTarget + int(target.Delta)
+			if newTarget < 0 {
+				newTarget = 0
+			}
+			d.targetCountByComponent[target.Component.Name] = newTarget
+			go comp.Scale(&scaleComponentInput{targetCount: newTarget})
 			if target.Delta > 0 {
 				out.Started = append(out.Started, target.ToV1ComponentDelta())
 			} else if target.Delta < 0 {

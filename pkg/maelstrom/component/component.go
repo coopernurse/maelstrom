@@ -44,7 +44,8 @@ type remoteNodesRequest struct {
 }
 
 func NewComponent(id maelComponentId, dispatcher *Dispatcher, nodeSvc v1.NodeService, dockerClient *docker.Client,
-	comp *v1.Component, maelstromUrl string, myNodeId string, remoteCounts remoteNodeCounts) *Component {
+	comp *v1.Component, maelstromUrl string, myNodeId string, targetContainers int,
+	remoteCounts remoteNodeCounts) *Component {
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	c := &Component{
@@ -60,6 +61,7 @@ func NewComponent(id maelComponentId, dispatcher *Dispatcher, nodeSvc v1.NodeSer
 		ctx:                    ctx,
 		ctxCancel:              ctxCancel,
 		ring:                   newComponentRing(comp.Name, myNodeId, remoteCounts),
+		targetContainers:       targetContainers,
 		containers:             make([]*Container, 0),
 		waitingReqs:            make([]*RequestInput, 0),
 		localReqCh:             make(chan *RequestInput),
@@ -84,6 +86,7 @@ type Component struct {
 	ctx                    context.Context
 	ctxCancel              context.CancelFunc
 	ring                   *componentRing
+	targetContainers       int
 	containers             []*Container
 	waitingReqs            []*RequestInput
 	localReqCh             chan *RequestInput
@@ -152,6 +155,11 @@ func (c *Component) run() {
 	c.wg.Add(1)
 	defer c.wg.Done()
 	defer c.ctxCancel()
+
+	// scale to target on startup
+	if c.targetContainers > 0 {
+		c.scale(&scaleComponentInput{targetCount: c.targetContainers})
+	}
 
 	running := true
 	for running {
@@ -297,6 +305,7 @@ func (c *Component) shutdown() {
 	for _, cn := range c.containers {
 		cn.JoinAndStop("component shutdown")
 	}
+	c.containers = make([]*Container, 0)
 
 	// clear local handlers from ring
 	c.ring.setLocalCount(0, c.handleReq)
@@ -310,10 +319,12 @@ func (c *Component) shutdown() {
 }
 
 func (c *Component) scale(req *scaleComponentInput) {
-	if req.delta > 0 {
-		c.scaleUp(int(req.delta))
-	} else if req.delta < 0 {
-		c.scaleDown(int(req.delta * -1))
+	c.targetContainers = req.targetCount
+	c.ring.setLocalCount(c.targetContainers, c.handleReq)
+	if req.targetCount > len(c.containers) {
+		c.scaleUp(req.targetCount - len(c.containers))
+	} else if req.targetCount < len(c.containers) {
+		c.scaleDown(len(c.containers) - req.targetCount)
 	}
 }
 
@@ -340,12 +351,8 @@ func (c *Component) dockerEvent(req *dockerEventRequest) {
 }
 
 func (c *Component) scaleDown(num int) {
-	if num >= len(c.containers) {
-		c.shutdown()
-	} else {
-		for i := 0; i < num; i++ {
-			c.stopAndRemoveContainer(c.containers[i], "scale down")
-		}
+	for i := 0; i < num && i < len(c.containers); i++ {
+		c.stopAndRemoveContainer(c.containers[i], "scale down")
 	}
 }
 
