@@ -261,6 +261,7 @@ func (c *Component) setContainerStatus(req *containerStatusRequest) {
 
 func (c *Component) setRemoteNodes(req *remoteNodesRequest) {
 	c.ring.setRemoteNodes(req.counts)
+	c.flushWaitingRequests()
 }
 
 func (c *Component) handleReq(req *RequestInput) {
