@@ -125,7 +125,7 @@ func (c *componentRing) rebuildHandlers() {
 				local:   false,
 			}
 			for i := 0; i < count; i++ {
-				c.handlers = append(c.handlers, compHandler)
+				handlers = append(handlers, compHandler)
 				remoteCount++
 			}
 		} else {
