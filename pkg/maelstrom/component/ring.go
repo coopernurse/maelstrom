@@ -3,9 +3,12 @@ package component
 import (
 	log "github.com/mgutz/logxi/v1"
 	"math/rand"
+	"net"
+	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"reflect"
+	"time"
 )
 
 type reqHandler func(req *RequestInput)
@@ -109,6 +112,14 @@ func (c *componentRing) rebuildHandlers() {
 		target, err := url.Parse(peerUrl)
 		if err == nil {
 			proxy := httputil.NewSingleHostReverseProxy(target)
+			proxy.Transport = &http.Transport{
+				Proxy: http.ProxyFromEnvironment,
+				DialContext: (&net.Dialer{
+					Timeout:   30 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				TLSHandshakeTimeout: 10 * time.Second,
+			}
 			compName := c.componentName
 			handler := func(req *RequestInput) {
 				relayPath := req.Req.Header.Get("MAELSTROM-RELAY-PATH")

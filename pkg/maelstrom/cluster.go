@@ -1,6 +1,7 @@
 package maelstrom
 
 import (
+	"fmt"
 	"github.com/coopernurse/barrister-go"
 	"github.com/coopernurse/maelstrom/pkg/common"
 	v1 "github.com/coopernurse/maelstrom/pkg/v1"
@@ -21,6 +22,8 @@ func NewCluster(myNodeId string, localNodeService v1.NodeService) *Cluster {
 		observers:        []ClusterObserver{},
 		nodesById:        map[string]v1.NodeStatus{},
 		lock:             &sync.Mutex{},
+		barristerLock:    &sync.Mutex{},
+		barristerClients: make(map[string]barrister.Client),
 	}
 }
 
@@ -31,6 +34,8 @@ type Cluster struct {
 	observers             []ClusterObserver
 	nodesById             map[string]v1.NodeStatus
 	lock                  *sync.Mutex
+	barristerLock         *sync.Mutex
+	barristerClients      map[string]barrister.Client
 }
 
 func (c *Cluster) AddObserver(observer ClusterObserver) {
@@ -160,12 +165,7 @@ func (c *Cluster) GetNodeServiceWithTimeout(node v1.NodeStatus, timeout time.Dur
 	if node.NodeId == c.myNodeId {
 		return c.localNodeService
 	}
-	transport := &barrister.HttpTransport{Url: node.PeerUrl + "/_mael/v1"}
-	if timeout > 0 {
-		transport.Client = &http.Client{Timeout: timeout}
-	}
-	client := barrister.NewRemoteClient(transport, false)
-	return v1.NewNodeServiceProxy(client)
+	return v1.NewNodeServiceProxy(c.getBarristerClient(node.PeerUrl, timeout))
 }
 
 func (c *Cluster) GetNodeService(node v1.NodeStatus) v1.NodeService {
@@ -176,12 +176,26 @@ func (c *Cluster) GetMaelstromServiceWithTimeout(node v1.NodeStatus, timeout tim
 	if node.NodeId == c.myNodeId {
 		return c.localMaelstromService
 	}
-	transport := &barrister.HttpTransport{Url: node.PeerUrl + "/_mael/v1"}
+	return v1.NewMaelstromServiceProxy(c.getBarristerClient(node.PeerUrl, timeout))
+}
+
+func (c *Cluster) getBarristerClient(peerUrl string, timeout time.Duration) barrister.Client {
+	cacheKey := fmt.Sprintf("%s|%d", peerUrl, timeout.Nanoseconds())
+
+	c.barristerLock.Lock()
+	defer c.barristerLock.Unlock()
+
+	client, ok := c.barristerClients[cacheKey]
+	if ok {
+		return client
+	}
+	transport := &barrister.HttpTransport{Url: peerUrl + "/_mael/v1"}
 	if timeout > 0 {
 		transport.Client = &http.Client{Timeout: timeout}
 	}
-	client := barrister.NewRemoteClient(transport, false)
-	return v1.NewMaelstromServiceProxy(client)
+	client = barrister.NewRemoteClient(transport, false)
+	c.barristerClients[cacheKey] = client
+	return client
 }
 
 func (c *Cluster) GetMaelstromService(node v1.NodeStatus) v1.MaelstromService {
