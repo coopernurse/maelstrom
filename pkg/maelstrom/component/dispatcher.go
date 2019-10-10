@@ -8,6 +8,7 @@ import (
 	log "github.com/mgutz/logxi/v1"
 	"github.com/pkg/errors"
 	"net/http"
+	"reflect"
 	"strconv"
 	"sync"
 	"time"
@@ -21,6 +22,7 @@ type dispatcherMsg struct {
 	dockerEventReq     *dockerEventRequest
 	dataChangedReq     *dataChangedRequest
 	componentStatusReq *componentStatusRequest
+	clusterUpdatedReq  *clusterUpdatedRequest
 	shutdown           bool
 }
 
@@ -42,21 +44,26 @@ type componentStatusRequest struct {
 	status maelComponentStatus
 }
 
+type clusterUpdatedRequest struct {
+	nodes map[string]v1.NodeStatus
+}
+
 func NewDispatcher(nodeSvc v1.NodeService, dockerClient *docker.Client, maelstromUrl string,
 	myNodeId string) (*Dispatcher, error) {
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	d := &Dispatcher{
-		nodeSvc:                nodeSvc,
-		dockerClient:           dockerClient,
-		inbox:                  make(chan dispatcherMsg),
-		wg:                     &sync.WaitGroup{},
-		ctx:                    ctx,
-		ctxCancel:              ctxCancel,
-		componentsByName:       make(map[string]*Component),
-		version:                common.NowMillis(),
-		maelstromUrl:           maelstromUrl,
-		myNodeId:               myNodeId,
-		maelComponentIdCounter: maelComponentId(0),
+		nodeSvc:                 nodeSvc,
+		dockerClient:            dockerClient,
+		inbox:                   make(chan dispatcherMsg),
+		wg:                      &sync.WaitGroup{},
+		ctx:                     ctx,
+		ctxCancel:               ctxCancel,
+		componentsByName:        make(map[string]*Component),
+		version:                 common.NowMillis(),
+		maelstromUrl:            maelstromUrl,
+		myNodeId:                myNodeId,
+		maelComponentIdCounter:  maelComponentId(0),
+		remoteCountsByComponent: make(map[string]remoteNodeCounts),
 	}
 
 	rmCount, err := common.RemoveMaelstromContainers(dockerClient, "removing stale containers")
@@ -72,17 +79,18 @@ func NewDispatcher(nodeSvc v1.NodeService, dockerClient *docker.Client, maelstro
 }
 
 type Dispatcher struct {
-	nodeSvc                v1.NodeService
-	dockerClient           *docker.Client
-	inbox                  chan dispatcherMsg
-	wg                     *sync.WaitGroup
-	ctx                    context.Context
-	ctxCancel              context.CancelFunc
-	componentsByName       map[string]*Component
-	version                int64
-	maelstromUrl           string
-	myNodeId               string
-	maelComponentIdCounter maelComponentId
+	nodeSvc                 v1.NodeService
+	dockerClient            *docker.Client
+	inbox                   chan dispatcherMsg
+	wg                      *sync.WaitGroup
+	ctx                     context.Context
+	ctxCancel               context.CancelFunc
+	componentsByName        map[string]*Component
+	version                 int64
+	maelstromUrl            string
+	myNodeId                string
+	maelComponentIdCounter  maelComponentId
+	remoteCountsByComponent map[string]remoteNodeCounts
 }
 
 func (d *Dispatcher) Route(rw http.ResponseWriter, req *http.Request, comp *v1.Component, publicGateway bool) {
@@ -164,8 +172,7 @@ func (d *Dispatcher) OnDockerEvent(msg common.DockerEvent) {
 }
 
 func (d *Dispatcher) OnClusterUpdated(nodes map[string]v1.NodeStatus) {
-	// TODO: implement
-	//log.Info("OnClusterUpdated", "nodes", nodes)
+	d.trySend(dispatcherMsg{clusterUpdatedReq: &clusterUpdatedRequest{nodes: nodes}})
 }
 
 func (d *Dispatcher) OnComponentNotification(change v1.DataChangedUnion) {
@@ -208,6 +215,8 @@ func (d *Dispatcher) run() {
 				d.dataChanged(msg.dataChangedReq)
 			} else if msg.componentStatusReq != nil {
 				d.setComponentStatus(msg.componentStatusReq)
+			} else if msg.clusterUpdatedReq != nil {
+				d.clusterUpdated(msg.clusterUpdatedReq)
 			} else if msg.shutdown {
 				d.shutdown()
 				running = false
@@ -230,7 +239,8 @@ func (d *Dispatcher) component(dbComp *v1.Component) *Component {
 func (d *Dispatcher) startComponent(dbComp *v1.Component) *Component {
 	dbComp.Docker.Image = common.NormalizeImageName(dbComp.Docker.Image)
 	d.maelComponentIdCounter++
-	c := NewComponent(d.maelComponentIdCounter, d, d.nodeSvc, d.dockerClient, dbComp, d.maelstromUrl, d.myNodeId)
+	c := NewComponent(d.maelComponentIdCounter, d, d.nodeSvc, d.dockerClient, dbComp, d.maelstromUrl, d.myNodeId,
+		d.remoteCountsByComponent[dbComp.Name])
 	d.componentsByName[dbComp.Name] = c
 	return c
 }
@@ -347,6 +357,36 @@ func (d *Dispatcher) setComponentStatus(req *componentStatusRequest) {
 			}
 		}
 	}
+}
+
+func (d *Dispatcher) clusterUpdated(req *clusterUpdatedRequest) {
+	remoteCountsByComponent := toRemoteCounts(req.nodes, d.myNodeId)
+	if reflect.DeepEqual(remoteCountsByComponent, d.remoteCountsByComponent) {
+		// no-op - counts are unchanged
+		return
+	}
+	d.remoteCountsByComponent = remoteCountsByComponent
+	log.Info("dispatcher: cluster routes updated", "countsByComponent", d.remoteCountsByComponent)
+	for componentName, cn := range d.componentsByName {
+		go cn.SetRemoteNodes(&remoteNodesRequest{counts: remoteCountsByComponent[componentName]})
+	}
+}
+
+func toRemoteCounts(nodes map[string]v1.NodeStatus, myNodeId string) map[string]remoteNodeCounts {
+	remoteCountsByComponent := make(map[string]remoteNodeCounts)
+	for _, node := range nodes {
+		if node.NodeId != myNodeId {
+			for _, rc := range node.RunningComponents {
+				remoteCounts, ok := remoteCountsByComponent[rc.ComponentName]
+				if !ok {
+					remoteCounts = make(remoteNodeCounts)
+					remoteCountsByComponent[rc.ComponentName] = remoteCounts
+				}
+				remoteCounts[node.PeerUrl] = remoteCounts[node.PeerUrl] + 1
+			}
+		}
+	}
+	return remoteCountsByComponent
 }
 
 func componentReqDeadline(deadlineNanoFromHeader int64, component *v1.Component) time.Time {

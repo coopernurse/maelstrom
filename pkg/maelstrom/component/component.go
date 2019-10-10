@@ -44,7 +44,7 @@ type remoteNodesRequest struct {
 }
 
 func NewComponent(id maelComponentId, dispatcher *Dispatcher, nodeSvc v1.NodeService, dockerClient *docker.Client,
-	comp *v1.Component, maelstromUrl string, myNodeId string) *Component {
+	comp *v1.Component, maelstromUrl string, myNodeId string, remoteCounts remoteNodeCounts) *Component {
 
 	ctx, ctxCancel := context.WithCancel(context.Background())
 	c := &Component{
@@ -59,7 +59,7 @@ func NewComponent(id maelComponentId, dispatcher *Dispatcher, nodeSvc v1.NodeSer
 		wg:                     &sync.WaitGroup{},
 		ctx:                    ctx,
 		ctxCancel:              ctxCancel,
-		ring:                   newComponentRing(comp.Name, myNodeId),
+		ring:                   newComponentRing(comp.Name, myNodeId, remoteCounts),
 		containers:             make([]*Container, 0),
 		waitingReqs:            make([]*RequestInput, 0),
 		localReqCh:             make(chan *RequestInput),
@@ -105,7 +105,11 @@ func (c *Component) ComponentInfo(infoCh chan v1.ComponentInfo) bool {
 		infoCh: infoCh,
 		done:   make(chan bool, 1),
 	}
-	return c.trySend(componentMsg{infoReq: req})
+	if c.trySend(componentMsg{infoReq: req}) {
+		<-req.done
+		return true
+	}
+	return false
 }
 
 func (c *Component) InstanceCount(req *instanceCountRequest) {
@@ -253,6 +257,10 @@ func (c *Component) setContainerStatus(req *containerStatusRequest) {
 
 	c.ring.setLocalCount(activeCount, c.handleReq)
 	c.flushWaitingRequests()
+}
+
+func (c *Component) setRemoteNodes(req *remoteNodesRequest) {
+	c.ring.setRemoteNodes(req.counts)
 }
 
 func (c *Component) handleReq(req *RequestInput) {

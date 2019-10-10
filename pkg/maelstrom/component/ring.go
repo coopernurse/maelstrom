@@ -18,7 +18,7 @@ type componentHandler struct {
 	local   bool
 }
 
-func newComponentRing(componentName string, myNodeId string) *componentRing {
+func newComponentRing(componentName string, myNodeId string, remoteNodes remoteNodeCounts) *componentRing {
 	return &componentRing{
 		componentName: componentName,
 		myNodeId:      myNodeId,
@@ -26,7 +26,7 @@ func newComponentRing(componentName string, myNodeId string) *componentRing {
 		localHandler:  nil,
 		localCount:    0,
 		handlers:      nil,
-		remoteNodes:   nil,
+		remoteNodes:   remoteNodes,
 	}
 }
 
@@ -78,27 +78,32 @@ func (c *componentRing) setLocalCount(localCount int, handlerFx reqHandler) {
 		}
 	}
 
-	keep := make([]*componentHandler, 0)
-	for _, h := range c.handlers {
-		if !h.local {
-			keep = append(keep, h)
-		}
-	}
-	for i := 0; i < localCount; i++ {
-		keep = append(keep, c.localHandler)
-	}
 	c.localCount = localCount
-	c.handlers = keep
-	c.countAndShuffle()
+	c.rebuildHandlers()
 }
 
 func (c *componentRing) setRemoteNodes(remoteNodes remoteNodeCounts) {
-	if c.remoteNodes != nil && reflect.DeepEqual(c.remoteNodes, remoteNodes) {
+	if reflect.DeepEqual(c.remoteNodes, remoteNodes) {
 		// no change
 		return
 	}
+	log.Info("ring: remote nodes udpated", "nodes", remoteNodes, "component", c.componentName)
+	c.remoteNodes = remoteNodes
+	c.rebuildHandlers()
+}
 
-	for peerUrl, count := range remoteNodes {
+func (c *componentRing) rebuildHandlers() {
+	localCount := 0
+	remoteCount := 0
+
+	handlers := make([]*componentHandler, 0)
+	if c.localHandler != nil {
+		for i := 0; i < c.localCount; i++ {
+			handlers = append(handlers, c.localHandler)
+			localCount++
+		}
+	}
+	for peerUrl, count := range c.remoteNodes {
 		target, err := url.Parse(peerUrl)
 		if err == nil {
 			proxy := httputil.NewSingleHostReverseProxy(target)
@@ -121,26 +126,14 @@ func (c *componentRing) setRemoteNodes(remoteNodes remoteNodeCounts) {
 			}
 			for i := 0; i < count; i++ {
 				c.handlers = append(c.handlers, compHandler)
+				remoteCount++
 			}
 		} else {
 			log.Error("router: cannot create peer url", "err", err, "url", peerUrl)
 		}
 	}
-	c.remoteNodes = remoteNodes
-	c.countAndShuffle()
-}
+	c.handlers = handlers
 
-func (c *componentRing) countAndShuffle() {
-	localCount := 0
-	remoteCount := 0
-	for _, h := range c.handlers {
-		if h.local {
-			localCount++
-		} else {
-			remoteCount++
-		}
-	}
-	c.localCount = localCount
 	rand.Shuffle(len(c.handlers), func(i, j int) { c.handlers[i], c.handlers[j] = c.handlers[j], c.handlers[i] })
 	log.Info("ring: updated", "local", localCount, "remote", remoteCount, "component", c.componentName)
 }

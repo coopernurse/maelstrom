@@ -109,6 +109,7 @@ func (c *Container) ComponentInfo() v1.ComponentInfo {
 	c.statLock.Lock()
 	info := v1.ComponentInfo{
 		ComponentName:     c.component.Name,
+		ComponentVersion:  c.component.Version,
 		MaxConcurrency:    c.component.MaxConcurrency,
 		MemoryReservedMiB: c.component.Docker.ReserveMemoryMiB,
 		LastRequestTime:   common.TimeToMillis(c.lastReqTime),
