@@ -19,7 +19,7 @@ type componentHandler struct {
 }
 
 func newComponentRing(componentName string, myNodeId string, remoteNodes remoteNodeCounts) *componentRing {
-	return &componentRing{
+	ring := &componentRing{
 		componentName: componentName,
 		myNodeId:      myNodeId,
 		idx:           0,
@@ -28,6 +28,8 @@ func newComponentRing(componentName string, myNodeId string, remoteNodes remoteN
 		handlers:      nil,
 		remoteNodes:   remoteNodes,
 	}
+	ring.rebuildHandlers()
+	return ring
 }
 
 type componentRing struct {
@@ -87,7 +89,7 @@ func (c *componentRing) setRemoteNodes(remoteNodes remoteNodeCounts) {
 		// no change
 		return
 	}
-	log.Info("ring: remote nodes udpated", "nodes", remoteNodes, "component", c.componentName)
+	log.Info("ring: remote nodes updated", "component", c.componentName, "nodes", remoteNodes)
 	c.remoteNodes = remoteNodes
 	c.rebuildHandlers()
 }
@@ -135,5 +137,6 @@ func (c *componentRing) rebuildHandlers() {
 	c.handlers = handlers
 
 	rand.Shuffle(len(c.handlers), func(i, j int) { c.handlers[i], c.handlers[j] = c.handlers[j], c.handlers[i] })
-	log.Info("ring: updated", "local", localCount, "remote", remoteCount, "component", c.componentName)
+	log.Info("ring: updated", "component", c.componentName, "handlers", len(c.handlers), "local", localCount,
+		"remote", remoteCount)
 }

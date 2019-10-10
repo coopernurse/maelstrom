@@ -199,6 +199,7 @@ func (c *Component) request(req *RequestInput) {
 
 		// If it's been a minute since last placement request, ask nodeSvc to place a container
 		if time.Now().Sub(c.lastPlacedReq) > time.Minute {
+			c.lastPlacedReq = time.Now()
 			go c.placeComponent()
 		}
 	} else {
@@ -208,7 +209,6 @@ func (c *Component) request(req *RequestInput) {
 
 func (c *Component) placeComponent() {
 	log.Info("component: calling PlaceComponent", "component", c.component.Name)
-	c.lastPlacedReq = time.Now()
 	_, err := c.nodeSvc.PlaceComponent(v1.PlaceComponentInput{
 		ComponentName: c.component.Name,
 	})
