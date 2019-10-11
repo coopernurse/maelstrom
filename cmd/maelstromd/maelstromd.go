@@ -186,7 +186,7 @@ func main() {
 		daemonWG.Add(1)
 		interval := time.Second * time.Duration(conf.AwsSpotTerminatePollSeconds)
 		go nodeSvcImpl.RunAwsSpotTerminatePollerLoop(interval, cancelCtx, daemonWG)
-		log.Info("maelstromd: started AWS spot termination poller", "interval", interval)
+		log.Info("maelstromd: started AWS spot termination poller", "interval", interval.String())
 	}
 	log.Info("maelstromd: created NodeService", nodeSvcImpl.LogPairs()...)
 
