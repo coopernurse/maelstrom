@@ -180,7 +180,7 @@ func main() {
 		dockerPruner := maelstrom.NewDockerPruner(dockerClient, db, cancelCtx, conf.DockerPruneUnregImages,
 			strings.Split(conf.DockerPruneUnregKeep, ","))
 		daemonWG.Add(1)
-		go dockerPruner.Run(time.Duration(conf.DockerPruneMinutes), daemonWG)
+		go dockerPruner.Run(time.Minute*time.Duration(conf.DockerPruneMinutes), daemonWG)
 	}
 
 	daemonWG.Add(2)
