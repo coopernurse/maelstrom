@@ -54,13 +54,12 @@ func (d *DockerPruner) runOnce() {
 		if err == nil {
 			// Delete images not in use and not registered against a component
 			for _, id := range toDelete {
-				//_, err = d.dockerClient.ImageRemove(d.ctx, id, types.ImageRemoveOptions{})
-				//if err != nil {
-				//	log.Error("maelstrom: unable to remove image", "image", id, "err", err)
-				//} else {
-				//	log.Info("maelstrom: pruner removed image", "image", id)
-				//}
-				log.Info("maelstrom: pruner would remove image", "image", id)
+				_, err = d.dockerClient.ImageRemove(d.ctx, id, types.ImageRemoveOptions{})
+				if err != nil {
+					log.Error("maelstrom: unable to remove image", "image", id, "err", err)
+				} else {
+					log.Info("maelstrom: pruner removed image", "image", id)
+				}
 			}
 		} else {
 			log.Error("maelstrom: unable to load image ids to delete", "err", err)
@@ -142,7 +141,8 @@ func (d *DockerPruner) componentImages() ([]string, error) {
 			return nil, err
 		}
 
-		if out.NextToken == "" {
+		nextToken = out.NextToken
+		if nextToken == "" {
 			return imageNames, nil
 		}
 	}
