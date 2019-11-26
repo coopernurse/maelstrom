@@ -237,7 +237,6 @@ func (c *Component) instanceCount(req *instanceCountRequest) {
 }
 
 func (c *Component) notifyContainersChanged() {
-	c.ring.setLocalCount(c.converger.getContainerCount(), c.handleReq)
 	c.flushWaitingRequests()
 }
 

@@ -168,6 +168,10 @@ type dockerMonitor struct {
 	events       []*dockerEvent
 }
 
+func (d *dockerMonitor) reset() {
+	d.events = make([]*dockerEvent, 0)
+}
+
 func (d *dockerMonitor) start() {
 	d.wg.Add(1)
 	go d.monitorEventLoop()
@@ -534,6 +538,11 @@ func (f *Fixture) WhenHTTPRequestsAreMadeContinuously() *Fixture {
 
 func (f *Fixture) AndTimePasses(duration time.Duration) *Fixture {
 	time.Sleep(duration)
+	return f
+}
+
+func (f *Fixture) AndDockerEventsAreReset() *Fixture {
+	dMonitor.reset()
 	return f
 }
 

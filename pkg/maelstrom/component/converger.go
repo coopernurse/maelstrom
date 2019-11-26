@@ -36,14 +36,32 @@ type convergeStep struct {
 	stop  *stopStep
 }
 
+func (c convergeStep) String() string {
+	if c.start != nil {
+		return c.start.String()
+	} else if c.stop != nil {
+		return c.stop.String()
+	} else {
+		return "unknown step"
+	}
+}
+
 type startStep struct {
 	component *v1.Component
 	lock      bool
 }
 
+func (s *startStep) String() string {
+	return fmt.Sprintf("startStep: component=%s ver=%d lock=%v", s.component.Name, s.component.Version, s.lock)
+}
+
 type stopStep struct {
 	containerId maelContainerId
 	reason      string
+}
+
+func (s *stopStep) String() string {
+	return fmt.Sprintf("stopStep: containerId=%d reason=%s", s.containerId, s.reason)
 }
 
 type ComponentTarget struct {
@@ -148,10 +166,18 @@ func (c *Converger) GetComponentInfo() []v1.ComponentInfo {
 }
 
 func (c *Converger) OnDockerEvent(event *common.DockerEvent) {
+	run := false
 	if event.ContainerExited != nil && event.ContainerExited.ContainerId != "" {
 		c.stopAndRemoveContainer(0, event.ContainerExited.ContainerId, "container exited")
+		run = true
 	} else if event.ImageUpdated != nil && c.GetTarget().Component.Docker.Image == event.ImageUpdated.ImageName {
 		c.markContainersForTermination(reasonImageUpdated)
+		run = true
+	}
+
+	if run {
+		// alert background goroutine to re-converge
+		go func() { c.runCh <- true }()
 	}
 }
 
@@ -212,8 +238,14 @@ func (c *Converger) stopAndRemoveContainer(id maelContainerId, dockerContainerId
 			}
 		}
 		c.containers = keep
+		if log.IsDebug() {
+			log.Debug("converge: post stopAndRemoveContainer", "containers", c.containers)
+		}
 		c.lock.Unlock()
 		c.notifyContainersChanged()
+	} else {
+		log.Debug("converge: stopAndRemoveContainer - no container found", "maelContainerId", id,
+			"dockerContainerId", dockerContainerId)
 	}
 }
 
@@ -389,6 +421,11 @@ func (c *Converger) plan(target ComponentTarget) convergePlan {
 				plan.steps = append(plan.steps, convergeStep{stop: step})
 			}
 		}
+	}
+
+	if log.IsDebug() {
+		log.Debug("converge: prepared plan", "pull", plan.pull, "steps", fmt.Sprintf("%v", plan.steps),
+			"containers", c.containers)
 	}
 
 	return plan

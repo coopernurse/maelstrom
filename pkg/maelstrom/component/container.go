@@ -117,7 +117,7 @@ func (c *Container) ComponentInfo() v1.ComponentInfo {
 }
 
 func (c *Container) CancelAndStop(reason string) {
-	log.Info("container: shutting down: "+reason, "containerId", common.StrTruncate(c.containerId, 8))
+	log.Info("container: shutting down", "reason", reason, "containerId", common.StrTruncate(c.containerId, 8))
 
 	// cancel context - this will cause rev proxies and run loop to exit
 	// note that rev proxies may not fully drain reqCh - so this should only
