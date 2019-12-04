@@ -541,7 +541,10 @@ func (n *NodeServiceImpl) StartStopComponents(input v1.StartStopComponentsInput)
 }
 
 func (n *NodeServiceImpl) OnContainersChanged() {
-	n.resolveAndBroadcastNodeStatus(context.Background())
+	_, err := n.resolveAndBroadcastNodeStatus(context.Background())
+	if err != nil {
+		log.Error("nodesvc: OnContainersChanged error", "err", err)
+	}
 }
 
 func (n NodeServiceImpl) TerminateNode(input v1.TerminateNodeInput) (v1.TerminateNodeOutput, error) {
