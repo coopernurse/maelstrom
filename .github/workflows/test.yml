@@ -5,7 +5,7 @@ on: [push]
 jobs:
   build:
 
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v1
@@ -20,7 +20,7 @@ jobs:
         mkdir -p "$CI_CACHEDIR"
         pip install --user wheel
         ./scripts/install_deps.sh
-        sudo apt-get update
+        #sudo apt-get update
         sudo apt-get install -y libsqlite3-dev
         make idl
         make maelctl
