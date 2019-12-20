@@ -16,7 +16,6 @@ import (
 
 func TestPropertyNeverExceedsTotalMemory(t *testing.T) {
 	f := func(nodeComps NodesAndComponents) bool {
-		fmt.Println("======== test start")
 		input := nodeComps.Input
 		beforeRamByNode := map[string]int64{}
 		nodesById := map[string]v1.NodeStatus{}
@@ -48,7 +47,6 @@ func TestPropertyNeverExceedsTotalMemory(t *testing.T) {
 				return false
 			}
 		}
-		fmt.Println("======== test ok")
 		return true
 	}
 	if err := quick.Check(f, &quick.Config{MaxCount: 3000}); err != nil {
