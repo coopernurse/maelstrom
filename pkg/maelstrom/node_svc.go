@@ -137,7 +137,7 @@ func (n *NodeServiceImpl) GetConvergeRegistry() *converge.Registry {
 }
 
 func (n *NodeServiceImpl) LogPairs() []interface{} {
-	return []interface{}{"nodeId", n.nodeId, "peerUrl", n.peerUrl, "numCPUs", n.numCPUs}
+	return []interface{}{"nodeId", n.nodeId, "peerUrl", n.peerUrl, "numCPUs", n.numCPUs, "totalMem", n.totalMemAllowed}
 }
 
 func (n *NodeServiceImpl) OnClusterUpdated(nodes map[string]v1.NodeStatus) {

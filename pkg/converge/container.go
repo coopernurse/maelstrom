@@ -196,7 +196,11 @@ func (c *Container) run() {
 		case dur := <-c.statCh:
 			// duration received after request fulfilled - increment counters
 			c.bumpReqStats()
-			durationSinceRollover += dur
+			if dur < 0 {
+				log.Warn("container: ignoring negative request duration", "component", c.component.Name)
+			} else {
+				durationSinceRollover += dur
+			}
 		case <-activityTicker:
 			// rotate activity buffer - this is used to report concurrency and req counts every x seconds
 			previousTotalRequests = c.appendActivity(previousTotalRequests, rolloverStartTime,

@@ -61,7 +61,6 @@ func (g *Gateway) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func (g *Gateway) Route(rw http.ResponseWriter, req *http.Request, comp *v1.Component, publicGateway bool) {
 	// Set Deadline
-	var reqStart time.Time
 	var reqStartNano int64
 	var deadlineNano int64
 	if !publicGateway {
@@ -72,11 +71,7 @@ func (g *Gateway) Route(rw http.ResponseWriter, req *http.Request, comp *v1.Comp
 		reqStartStr := req.Header.Get("MAELSTROM-START-NANO")
 		if reqStartStr != "" {
 			reqStartNano, _ = strconv.ParseInt(reqStartStr, 10, 64)
-			reqStart = time.Unix(0, reqStartNano)
 		}
-	}
-	if reqStart.IsZero() {
-		reqStart = time.Now()
 	}
 
 	deadline := componentReqDeadline(deadlineNano, comp)
@@ -84,14 +79,16 @@ func (g *Gateway) Route(rw http.ResponseWriter, req *http.Request, comp *v1.Comp
 	if req.Header.Get("MAELSTROM-DEADLINE-NANO") == "" {
 		req.Header.Set("MAELSTROM-DEADLINE-NANO", strconv.FormatInt(deadline.UnixNano(), 10))
 	}
-	if req.Header.Get("MAELSTROM-START-NANO") == "" {
-		req.Header.Set("MAELSTROM-START-NANO", strconv.FormatInt(reqStart.UnixNano(), 10))
-	}
 
 	// Send request to dispatcher
 	preferLocal := req.Header.Get("MAELSTROM-RELAY-PATH") != ""
 	compReq := revproxy.NewRequest(req, rw, comp, preferLocal)
-	compReq.StartTime = reqStart
+	if reqStartNano != 0 && reqStartNano < compReq.StartTime.UnixNano() {
+		compReq.StartTime = time.Unix(0, reqStartNano)
+	}
+	if req.Header.Get("MAELSTROM-START-NANO") == "" {
+		req.Header.Set("MAELSTROM-START-NANO", strconv.FormatInt(compReq.StartTime.UnixNano(), 10))
+	}
 	g.routerReg.ByComponent(comp.Name).Route(ctx, compReq)
 
 	// Block on result, or timeout

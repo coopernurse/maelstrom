@@ -110,7 +110,12 @@ func (c *Cluster) broadcastStatusChangeAsync(input v1.StatusChangedInput, logPre
 	for _, svc := range c.GetRemoteNodeServices() {
 		go func(s v1.NodeService) {
 			if log.IsDebug() {
-				log.Debug("cluster: broadcastStatusChangeAsync", "version", input.Status.Version)
+				var version int64
+				if input.Status != nil {
+					version = input.Status.Version
+				}
+				log.Debug("cluster: broadcastStatusChangeAsync", "version", version,
+					"exiting", input.Exiting)
 			}
 			_, err := s.StatusChanged(input)
 			if err != nil {
