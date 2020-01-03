@@ -127,7 +127,7 @@ func (r *Registry) ByComponent(comp *v1.Component) (c *Converger) {
 			WithStopContainer(r.stopContainer).
 			WithStartLockAcquire(r.startLockAcquire).
 			WithPostStartContainer(r.postStartContainer).
-			WithNotifyContainersChanged(r.notifyContainersChanged)
+			WithNotifyContainersChanged(r.onContainersChanged)
 		c.Start()
 		r.byCompName[comp.Name] = c
 	}
@@ -170,6 +170,11 @@ func (r *Registry) incrContainerIdCounter() (c maelContainerId) {
 	c = r.containerCounterId
 	r.lock.Unlock()
 	return
+}
+
+func (r *Registry) onContainersChanged(count int) {
+	r.incrContainerIdCounter()
+	r.notifyContainersChanged(count)
 }
 
 func (r *Registry) startContainerAndHealthCheck(ctx context.Context, comp *v1.Component) (*Container, error) {

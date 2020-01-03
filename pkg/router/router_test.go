@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"github.com/coopernurse/maelstrom/pkg/revproxy"
 	v1 "github.com/coopernurse/maelstrom/pkg/v1"
 	"github.com/stretchr/testify/assert"
 	"net/http"
@@ -153,11 +154,13 @@ func TestRouteLocal(t *testing.T) {
 
 ///////////////////////////////////////////////////////
 
+var bufferPool = revproxy.NewProxyBufferPool()
+
 func newRouter() *Router {
-	return NewRouter("foo", func(componentName string) {})
+	return NewRouter("foo", "node1", bufferPool, func(componentName string) {})
 }
 
-func newReq() *Request {
+func newReq() *revproxy.Request {
 	comp := &v1.Component{
 		Name:   "foo",
 		Docker: &v1.DockerComponent{HttpStartHealthCheckSeconds: 5},
@@ -167,7 +170,7 @@ func newReq() *Request {
 	if err != nil {
 		panic(err)
 	}
-	return NewRequest(req, rw, comp, false)
+	return revproxy.NewRequest(req, rw, comp, false)
 }
 
 func runNoOpRemoteHandler(r *Router) {
@@ -178,7 +181,7 @@ func runNoOpLocalHandler(r *Router) {
 	runNoOpHandler(r.HandlerStartLocal())
 }
 
-func runNoOpHandler(reqCh <-chan *Request) {
+func runNoOpHandler(reqCh <-chan *revproxy.Request) {
 	go func() {
 		for req := range reqCh {
 			req.Rw.WriteHeader(200)

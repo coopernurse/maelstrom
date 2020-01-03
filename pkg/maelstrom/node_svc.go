@@ -63,6 +63,7 @@ func NewNodeServiceImplFromDocker(db db.Db, dockerClient *docker.Client, private
 		numCPUs:                      int64(info.NCPU),
 		loadStatusLock:               &sync.Mutex{},
 		placeCompLock:                &sync.Mutex{},
+		clusterUpdateLock:            &sync.Mutex{},
 		placeCompWaiters:             make(map[string][]chan placeComponentResult),
 		shutdownCh:                   shutdownCh,
 		awsSession:                   awsSession,
@@ -104,17 +105,18 @@ type NodeServiceImpl struct {
 	nodeId string
 	// instanceId is an optional string used to identify the host machine
 	// this is typically an identifier set by the cloud provider (e.g. AWS EC2 Instance ID)
-	instanceId       string
-	peerUrl          string
-	totalMemAllowed  int64
-	startTimeMillis  int64
-	numCPUs          int64
-	loadStatusLock   *sync.Mutex
-	placeCompLock    *sync.Mutex
-	placeCompWaiters map[string][]chan placeComponentResult
-	shutdownCh       chan ShutdownFunc
-	awsSession       *session.Session
-	terminateCommand string
+	instanceId        string
+	peerUrl           string
+	totalMemAllowed   int64
+	startTimeMillis   int64
+	numCPUs           int64
+	loadStatusLock    *sync.Mutex
+	placeCompLock     *sync.Mutex
+	clusterUpdateLock *sync.Mutex
+	placeCompWaiters  map[string][]chan placeComponentResult
+	shutdownCh        chan ShutdownFunc
+	awsSession        *session.Session
+	terminateCommand  string
 
 	urlInstanceCountsByComponent map[string]map[string]int
 
@@ -139,9 +141,20 @@ func (n *NodeServiceImpl) LogPairs() []interface{} {
 }
 
 func (n *NodeServiceImpl) OnClusterUpdated(nodes map[string]v1.NodeStatus) {
+	n.clusterUpdateLock.Lock()
+	defer n.clusterUpdateLock.Unlock()
+
+	if log.IsDebug() {
+		for nodeId, status := range nodes {
+			log.Debug("nodesvc: cluster update", "nodeId", nodeId, "running", status.RunningComponents)
+		}
+	}
 	routerReg := n.convergeReg.GetRouterRegistry()
 	remoteCountsByComp := toRemoteCountsByComponent(nodes, n.nodeId)
 	for compName, urlToInstanceCounts := range remoteCountsByComp {
+		if log.IsDebug() {
+			log.Debug("nodesvc: cluster update", "component", compName, "urlToInst", urlToInstanceCounts)
+		}
 		if !reflect.DeepEqual(urlToInstanceCounts, n.urlInstanceCountsByComponent[compName]) {
 			comp, err := n.db.GetComponent(compName)
 			if err == nil {
@@ -159,6 +172,12 @@ func (n *NodeServiceImpl) OnClusterUpdated(nodes map[string]v1.NodeStatus) {
 				log.Error("nodesvc: error getting component in OnClusterUpdated", "component", compName,
 					"err", err)
 			}
+		}
+	}
+	for compName, _ := range n.urlInstanceCountsByComponent {
+		if remoteCountsByComp[compName] == nil {
+			routerReg.ByComponent(compName).SetRemoteHandlerCounts(map[string]int{})
+			delete(n.urlInstanceCountsByComponent, compName)
 		}
 	}
 }
