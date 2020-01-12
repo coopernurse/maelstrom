@@ -142,7 +142,7 @@ func (c *Container) setStatus(newStatus v1.ComponentStatus) {
 	c.statLock.Lock()
 	if log.IsDebug() {
 		log.Debug("container: changing status", "from", c.status, "to", newStatus,
-			"containerId", c.containerId)
+			"containerId", common.StrTruncate(c.containerId, 8))
 	}
 	c.status = newStatus
 	c.statLock.Unlock()
