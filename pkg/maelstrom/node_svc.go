@@ -943,7 +943,7 @@ func (n *NodeServiceImpl) logStatus() error {
 	defer n.loadStatusLock.Unlock()
 
 	if n.terminated {
-		log.Warn("logStatus: node is terminated - skipping operation")
+		log.Warn("nodesvc: logStatus: node is terminated - skipping operation")
 		return nil
 	}
 
@@ -959,7 +959,7 @@ func (n *NodeServiceImpl) resolveAndBroadcastNodeStatus() error {
 	defer n.loadStatusLock.Unlock()
 
 	if n.terminated {
-		log.Warn("resolveAndBroadcastNodeStatus: node is terminated - skipping operation")
+		log.Warn("nodesvc: resolveAndBroadcastNodeStatus: node is terminated - skipping operation")
 		return nil
 	}
 
