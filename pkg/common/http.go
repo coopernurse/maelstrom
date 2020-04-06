@@ -18,7 +18,7 @@ type HTTPClientSettings struct {
 	TLSHandshakeTimeout   time.Duration
 }
 
-func NewHTTPClientWithSettings(httpSettings HTTPClientSettings) *http.Client {
+func NewHTTPClientWithSettings(httpSettings HTTPClientSettings) (*http.Client, error) {
 	tr := &http.Transport{
 		ResponseHeaderTimeout: httpSettings.ResponseHeaderTimeout,
 		Proxy:                 http.ProxyFromEnvironment,
@@ -35,9 +35,12 @@ func NewHTTPClientWithSettings(httpSettings HTTPClientSettings) *http.Client {
 	}
 
 	// So client makes HTTP/2 requests
-	http2.ConfigureTransport(tr)
+	err := http2.ConfigureTransport(tr)
+	if err != nil {
+		return nil, err
+	}
 
 	return &http.Client{
 		Transport: tr,
-	}
+	}, nil
 }
